@@ -182,7 +182,15 @@ function Who({ activities, reservations, members }: {
 }) {
   const t = todayStr();
   const upcoming = Object.keys(activities).filter((d) => d >= t).sort().slice(0, 7);
-  const [sel, setSel] = useState(t);
+ const [sel, setSel] = useState<string>(upcoming[0] || t);
+
+  // Update sel if upcoming changes and current sel is not in the list
+  useEffect(() => {
+    if (upcoming.length > 0 && !upcoming.includes(sel)) {
+      setSel(upcoming[0]);
+    }
+  }, [upcoming.join(",")]);
+
   const dr = reservations[sel] || [];
 
   return (
