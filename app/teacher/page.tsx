@@ -3,7 +3,6 @@
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
-import Calendar from "@/components/Calendar";
 import {
   getMembers, getActivities, getReservations, getCheckins, getAnnouncements,
   setActivity, deleteActivity, addMember, updateMember, deleteMember,
@@ -99,45 +98,200 @@ function TeacherHome({ activities, reservations, checkins, members }: {
   );
 }
 
+function getMonthDays(y: number, m: number): (string | null)[] {
+  const first = new Date(y, m, 1);
+  const last = new Date(y, m + 1, 0);
+  const days: (string | null)[] = [];
+  for (let i = 0; i < first.getDay(); i++) days.push(null);
+  for (let d = 1; d <= last.getDate(); d++)
+    days.push(`${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
+  return days;
+}
+
 function ActMgr({ activities }: { activities: Record<string, Activity> }) {
-  const [sel, setSel] = useState<string | null>(null);
-  const [form, setForm] = useState({ title: "", time: "放課後", memo: "" });
+  const [viewDate, setViewDate] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
+  const [form, setForm] = useState({ title: "通常活動", time: "放課後", memo: "" });
+  const [selected, setSelected] = useState<string[]>([]);
+  const [mode, setMode] = useState<"add" | "delete">("add");
+  const [message, setMessage] = useState("");
+  const days = getMonthDays(viewDate.y, viewDate.m);
+  const today = todayStr();
 
-  const pick = (d: string) => {
-    setSel(d);
-    const a = activities[d];
-    setForm(a ? { title: a.title || "", time: a.time || "放課後", memo: a.memo || "" } : { title: "", time: "放課後", memo: "" });
+  const prev = () => setViewDate((v) => v.m === 0 ? { y: v.y - 1, m: 11 } : { ...v, m: v.m - 1 });
+  const next = () => setViewDate((v) => v.m === 11 ? { y: v.y + 1, m: 0 } : { ...v, m: v.m + 1 });
+
+  const toggleDate = (d: string) => {
+    setSelected((prev) => prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]);
   };
 
-  const save = async () => {
-    if (!sel) return;
-    await setActivity(sel, { title: form.title || "通常活動", time: form.time, memo: form.memo });
+  const batchAdd = async () => {
+    if (selected.length === 0) return;
+    for (const d of selected) {
+      await setActivity(d, { title: form.title || "通常活動", time: form.time, memo: form.memo });
+    }
+    setMessage(`${selected.length}日分の活動日を登録しました`);
+    setSelected([]);
+    setTimeout(() => setMessage(""), 3000);
   };
 
-  const del = async () => {
-    if (!sel) return;
-    await deleteActivity(sel);
-    setForm({ title: "", time: "放課後", memo: "" });
+  const batchDelete = async () => {
+    if (selected.length === 0) return;
+    if (!confirm(`${selected.length}日分の活動日を削除しますか？`)) return;
+    for (const d of selected) {
+      await deleteActivity(d);
+    }
+    setMessage(`${selected.length}日分の活動日を削除しました`);
+    setSelected([]);
+    setTimeout(() => setMessage(""), 3000);
   };
+
+  const selectAllSaturdays = () => {
+    const sats = days.filter((d) => d && new Date(d + "T00:00:00").getDay() === 6) as string[];
+    setSelected((prev) => {
+      const allSelected = sats.every((s) => prev.includes(s));
+      if (allSelected) return prev.filter((d) => !sats.includes(d));
+      return [...new Set([...prev, ...sats])];
+    });
+  };
+
+  const selectAllSundays = () => {
+    const suns = days.filter((d) => d && new Date(d + "T00:00:00").getDay() === 0) as string[];
+    setSelected((prev) => {
+      const allSelected = suns.every((s) => prev.includes(s));
+      if (allSelected) return prev.filter((d) => !suns.includes(d));
+      return [...new Set([...prev, ...suns])];
+    });
+  };
+
+  const clearSelection = () => setSelected([]);
 
   return (
     <div className="page">
       <h2 className="page-title">📅 活動日管理</h2>
-      <Calendar activities={activities} selectedDay={sel} onSelectDay={pick} />
-      {sel && (
-        <div className="card">
-          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>{formatDate(sel)}</div>
-          <div className="flex-col">
-            <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="活動タイトル" className="input" />
-            <input value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} placeholder="時間（例: 放課後 16:00-18:00）" className="input" />
-            <input value={form.memo} onChange={(e) => setForm({ ...form, memo: e.target.value })} placeholder="メモ（任意）" className="input" />
-            <div className="flex-row">
-              <button onClick={save} className="btn-primary" style={{ flex: 1 }}>{activities[sel] ? "更新" : "活動日を追加"}</button>
-              {activities[sel] && <button onClick={del} className="btn-primary btn-danger" style={{ flex: 0, padding: "10px 20px" }}>削除</button>}
-            </div>
-          </div>
+
+      <div className="card">
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <button
+            onClick={() => { setMode("add"); setSelected([]); }}
+            style={{
+              flex: 1, padding: "10px", borderRadius: 8, border: "none", cursor: "pointer",
+              background: mode === "add" ? "#0f172a" : "#f1f5f9",
+              color: mode === "add" ? "#fff" : "#334155",
+              fontWeight: 700, fontSize: 13, fontFamily: "inherit",
+            }}
+          >＋ 追加モード</button>
+          <button
+            onClick={() => { setMode("delete"); setSelected([]); }}
+            style={{
+              flex: 1, padding: "10px", borderRadius: 8, border: "none", cursor: "pointer",
+              background: mode === "delete" ? "#ef4444" : "#f1f5f9",
+              color: mode === "delete" ? "#fff" : "#334155",
+              fontWeight: 700, fontSize: 13, fontFamily: "inherit",
+            }}
+          >🗑 削除モード</button>
         </div>
-      )}
+
+        {mode === "add" && (
+          <div className="flex-col" style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 4 }}>① 内容を入力</div>
+            <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="活動タイトル" className="input" />
+            <input value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} placeholder="時間（例: 9:00〜12:30）" className="input" />
+            <input value={form.memo} onChange={(e) => setForm({ ...form, memo: e.target.value })} placeholder="メモ（任意）" className="input" />
+          </div>
+        )}
+
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 8 }}>
+          {mode === "add" ? "② カレンダーから日付を選択（複数可）" : "削除する活動日を選択"}
+        </div>
+
+        <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+          <button onClick={selectAllSaturdays} style={{ padding: "4px 12px", borderRadius: 6, border: "1px solid #e2e8f0", background: "#fff", cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>
+            土曜を全選択
+          </button>
+          <button onClick={selectAllSundays} style={{ padding: "4px 12px", borderRadius: 6, border: "1px solid #e2e8f0", background: "#fff", cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>
+            日曜を全選択
+          </button>
+          {selected.length > 0 && (
+            <button onClick={clearSelection} style={{ padding: "4px 12px", borderRadius: 6, border: "1px solid #e2e8f0", background: "#fff", cursor: "pointer", fontSize: 12, color: "#ef4444", fontFamily: "inherit" }}>
+              選択解除
+            </button>
+          )}
+        </div>
+
+        <div className="flex-between mb-4">
+          <button onClick={prev} className="month-btn">◀</button>
+          <span className="fw-700" style={{ fontSize: 16 }}>{viewDate.y}年{viewDate.m + 1}月</span>
+          <button onClick={next} className="month-btn">▶</button>
+        </div>
+        <div className="cal-grid">
+          {"日月火水木金土".split("").map((d) => (
+            <div key={d} className="cal-header">{d}</div>
+          ))}
+          {days.map((d, i) => {
+            if (!d) return <div key={`e${i}`} />;
+            const act = activities[d];
+            const isSel = selected.includes(d);
+            const isToday = d === today;
+
+            return (
+              <button key={d} onClick={() => toggleDate(d)}
+                style={{
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
+                  padding: "8px 2px", borderRadius: 8, cursor: "pointer", fontSize: 13,
+                  fontFamily: "inherit",
+                  background: isSel ? (mode === "delete" ? "#fecaca" : "#bfdbfe") : act ? "#dcfce7" : "transparent",
+                  color: "#334155",
+                  border: isToday ? "2px solid #2563eb" : isSel ? `2px solid ${mode === "delete" ? "#ef4444" : "#2563eb"}` : "1px solid transparent",
+                  fontWeight: isToday ? 800 : 500,
+                }}>
+                <span>{parseInt(d.split("-")[2])}</span>
+                {act && <span style={{ fontSize: 6, color: "#22c55e" }}>●</span>}
+                {isSel && <span style={{ fontSize: 8, color: mode === "delete" ? "#ef4444" : "#2563eb" }}>✓</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        {selected.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 13, color: "#64748b", marginBottom: 8 }}>
+              {selected.length}日選択中: {selected.sort().map((d) => formatDate(d)).join("、")}
+            </div>
+            {mode === "add" ? (
+              <button onClick={batchAdd} className="btn-primary">
+                {selected.length}日分を一括登録
+              </button>
+            ) : (
+              <button onClick={batchDelete} className="btn-primary btn-danger">
+                {selected.length}日分を一括削除
+              </button>
+            )}
+          </div>
+        )}
+
+        {message && (
+          <div style={{ marginTop: 12, padding: "10px 14px", borderRadius: 8, background: "#dcfce7", color: "#059669", fontSize: 13, fontWeight: 600 }}>
+            ✓ {message}
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="fw-700 mb-3">登録済みの活動日</div>
+        {Object.keys(activities).sort().filter((d) => d >= today).length === 0 ? (
+          <div className="text-hint text-sm">今後の活動日はまだありません</div>
+        ) : (
+          Object.keys(activities).sort().filter((d) => d >= today).map((d) => (
+            <div key={d} style={{ padding: "8px 0", borderBottom: "1px solid #f1f5f9", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{formatDate(d)} — {activities[d].title || "通常活動"}</div>
+                <div style={{ fontSize: 11, color: "#94a3b8" }}>{activities[d].time}{activities[d].memo ? ` / ${activities[d].memo}` : ""}</div>
+              </div>
+              <button onClick={async () => { await deleteActivity(d); }} style={{ background: "none", border: "none", fontSize: 16, cursor: "pointer", color: "#ef4444" }}>🗑</button>
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 }
